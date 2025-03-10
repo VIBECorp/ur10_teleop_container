@@ -42,6 +42,7 @@ from std_msgs.msg import Float64MultiArray, Int32
 from builtin_interfaces.msg import Duration
 from controller_manager_msgs.srv import SwitchController, ListControllers
 from moveit.planning import MoveItPy
+from moveit.core.robot_state import RobotState
 
 def plan_and_execute(
     robot,
@@ -80,18 +81,22 @@ class ModeManager(Node):
     def __init__(self, args, ur10_moveit_py):
         super().__init__('mode_manager_node')
         
-        # planning component
-        self.ur10_moveit_py = ur10_moveit_py
-        self.ur10_arm = ur10_moveit_py.get_planning_component("ur10_arm")
-        self.get_logger().info(f"MoveItPy instance created, {type(self.ur10_arm)}")
-
         # load parameters
         self.load_parameters_from_config(args)
         self.button = 0.0
         self.mode = -1 # self.config['mode']
         self.base_controller = self.config['base_controller']
         self.velocity_controller = self.config['velocity_controller']
-            
+        self.planning_group = self.config['planning_group']
+        self.init_joint_states = self.config['init_joint_states']
+        
+        # planning component
+        self.ur10_moveit_py = ur10_moveit_py
+        self.ur10_arm = ur10_moveit_py.get_planning_component(self.planning_group)
+        self.robot_model = ur10_moveit_py.get_robot_model()
+        self.robot_state = RobotState(self.robot_model)
+        self.get_logger().info(f"MoveItPy instance created, {type(self.ur10_arm)}")
+
         # publisher & subscriber
         self.mode_pub = self.create_publisher(Int32, 'mode', 10)
         self.joystick_command_sub = self.create_subscription(Float64MultiArray, 'joystick_command', self.joystick_command_callback, 10)
@@ -131,6 +136,7 @@ class ModeManager(Node):
         self.button = self.keyboard_command[-1]
 
     def loop(self):
+        #self.get_logger().info(f"Mode: {mode_dict[self.mode]}")
         # mode change by input
         if self.button == 6.0:
             self.set_parameters([rclpy.parameter.Parameter('mode', rclpy.Parameter.Type.INTEGER, INIT)])
@@ -159,11 +165,23 @@ class ModeManager(Node):
             self.mode = mode
         
     def move_to_config_pose(self, config_pose, sleep_time=1.0):
-        assert config_pose in ['up', 'init', 'ready'], f"Invalid pose {config_pose}"
+        #assert config_pose in ['up', 'init', 'ready'], f"Invalid pose {config_pose}"
+        # self.ur10_arm.set_start_state_to_current_state()
+        # self.ur10_arm.set_goal_state(configuration_name=config_pose)
+        
+        # set plan start state to current state
         self.ur10_arm.set_start_state_to_current_state()
-        self.ur10_arm.set_goal_state(configuration_name=config_pose)
-        #current_state = self.ur10_arm.get_start_state()
-        #self.get_logger().info(f"Current state!!!!!!!!!!!!!!!: {current_state.joint_positions}")
+        
+        if config_pose == 'init':
+            # set joint group positions
+            # https://moveit.picknik.ai/main/doc/api/python_api/_autosummary/moveit.core.robot_state.html
+            self.robot_state.set_joint_group_positions(self.planning_group, self.init_joint_states)
+            # set goal state to the initialized robot state
+            self.ur10_arm.set_goal_state(robot_state=self.robot_state)
+        else:
+            raise ValueError(f"Invalid pose {config_pose}")
+        
+        # plan and execute
         plan_and_execute(self.ur10_moveit_py, self.ur10_arm, self.get_logger(), sleep_time=sleep_time)        
         
     def change_to_velocity_controller(self):

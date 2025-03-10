@@ -34,11 +34,15 @@ include_directories(include)
 # create cpp executable
 add_executable(task2joint src/task2joint.cpp)
 ament_target_dependencies(task2joint rclcpp std_msgs moveit_ros_planning_interface tutorial_interfaces)
+add_executable(task2joint_real src/task2joint_real.cpp)
+ament_target_dependencies(task2joint_real rclcpp std_msgs moveit_ros_planning_interface tutorial_interfaces)
 
 # install cpp executable
 # install(TARGETS talker
 #   DESTINATION lib/${PROJECT_NAME})
 install(TARGETS task2joint
+  DESTINATION lib/${PROJECT_NAME})
+install(TARGETS task2joint_real
   DESTINATION lib/${PROJECT_NAME})
 
 # install python modules

@@ -106,13 +106,10 @@ class TeleopController(Node):
 
     def current_joint_callback(self, msg):  
         current_joints = list(msg.position)
-        # gazebo에서 나온 joint states 순서 변경
-        # self.current_joints[0] = current_joints[3]
-        # self.current_joints[1] = current_joints[2]
-        # self.current_joints[2] = current_joints[0]
-        # self.current_joints[3] = current_joints[4]
-        # self.current_joints[4] = current_joints[5]
-        # self.current_joints[5] = current_joints[6]
+        if self.env == 'real':
+            # real hardware에서 나온 joint states 순서 변경
+            converted_joints = [current_joints[5], current_joints[0], current_joints[1], current_joints[2], current_joints[3], current_joints[4]]
+            current_joints = converted_joints
         self.current_joints = current_joints
         
     def load_parameters_from_config(self, args):

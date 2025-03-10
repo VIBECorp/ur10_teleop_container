@@ -1,0 +1,13 @@
+env: "real"
+planning_group: "ur_manipulator"
+mode: 0 # INIT = 0 # TELEOP = 1 # TASK_CONTROL = 2 # JOINT_CONTROL = 3 # AI = 4 # MOVEIT = 5 # IDLE = 6
+haptic_feedback: false
+base_controller: "scaled_joint_trajectory_controller"
+position_controller: "forward_position_controller"
+velocity_controller: "forward_velocity_controller"
+input_pos_gain: 0.00008
+input_ori_gain: 0.00016
+task_p_gain: 3
+task_d_gain: 3
+init_pose: [0.498, 0.165, 0.498, 1.518, 0.000, 1.580]
+init_joint_states: [0.0, -1.8397, 2.03, -0.2435, 1.5615, 0.0]

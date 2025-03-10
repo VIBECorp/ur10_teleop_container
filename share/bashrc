@@ -112,15 +112,18 @@ alias nodelist='ros2 node list'
 alias topiclist='ros2 topic list'
 alias clearws='rm -rf build install log'
 
-# ur_simulation_gz
-alias usc='ros2 launch ur_simulation_gz ur_sim_control.launch.py'
+# ur10 env
+alias ursim='ros2 launch ur_simulation_gz ur_sim_control.launch.py'
+alias urmock='ros2 launch ur_robot_driver ur_control.launch.py ur_type:=ur10 robot_ip:=xxx.xxx.xxx.xxx use_mock_hardware:=true
+'
 
 # ur10_interface
 alias input='ros2 run ur10_interface input_command.py'
 alias mm='ros2 run ur10_interface mode_manager.py'
 alias dti='ros2 run ur10_interface delta_target_input.py'
 alias tp='ros2 run ur10_interface target_pose.py'
-alias ti='ros2 launch ur10_interface teleop_interface.launch.py'
+alias tig='ros2 launch ur10_interface teleop_interface_gazebo.launch.py'
+alias tir='ros2 launch ur10_interface teleop_interface_real.launch.py'
 
 # rqt_controller_manager
 alias rqtcm='ros2 run rqt_controller_manager rqt_controller_manager --force-discover'

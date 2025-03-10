@@ -78,15 +78,16 @@ class TargetPose(Node):
         
     def loop(self):
         mode = self.mode
+        self.get_logger().info(f"Env: {self.env}, Mode: {mode_dict[mode]}")
         if mode == INIT:
             self.target_pose = copy.deepcopy(self.init_pose)
             if self.current_mode != mode: self.get_logger().info("Target pose initialized")
         elif mode in [TELEOP, AI]:
-            self.target_pose_msg = self.update_target_pose()
-            self.target_pose_pub.publish(self.target_pose_msg)
-            # if self.ik_success:
-            #     self.last_success_target_pose = self.target_pose
-            if self.current_mode != mode: self.get_logger().info("Target pose calculated and published")
+            self.update_target_pose() # add delta to target pose
+            if self.current_mode != mode: self.get_logger().info("Target pose is updating by delta input")
+        target_pose_msg = self.convert_to_pose_msg(self.target_pose)
+        self.target_pose_pub.publish(target_pose_msg)
+        
         self.current_mode = mode
         
     def load_parameters_from_config(self, args):
@@ -111,6 +112,7 @@ class TargetPose(Node):
         for i in range(6):
             self.target_pose[i] += self.delta_target_input[i]
 
+    def convert_to_pose_msg(self, target_pose):
         # Quaternion 변환
         q_new = quaternion_from_euler(self.target_pose[3], self.target_pose[4], self.target_pose[5])
         target_orientation = Quaternion(x=q_new[0], y=q_new[1], z=q_new[2], w=q_new[3])

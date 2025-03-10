@@ -106,7 +106,7 @@ private:
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
     // Variables
-    const std::string PLANNING_GROUP = "ur10_arm";
+    const std::string PLANNING_GROUP = "ur_manipulator";
     robot_model_loader::RobotModelLoader robot_model_loader;
     const moveit::core::RobotModelPtr& kinematic_model;
     moveit::core::RobotStatePtr robot_state;
@@ -154,14 +154,6 @@ private:
         {
             robot_state->copyJointGroupPositions(joint_model_group, ik_result);
             // RCLCPP_INFO(this->get_logger(), "found IK solution");
-            // update ik_result message
-            // ik_result.data.clear();
-            // ik_result.data.push_back(joint_values[0]);
-            // ik_result.data.push_back(joint_values[1]);
-            // ik_result.data.push_back(joint_values[2]);
-            // ik_result.data.push_back(joint_values[3]);
-            // ik_result.data.push_back(joint_values[4]);
-            // ik_result.data.push_back(joint_values[5]);
             
             // Check solution continuity
             bool continuity = check_solution_continuity();
@@ -279,8 +271,6 @@ int main(int argc, char** argv) {
     node_options.automatically_declare_parameters_from_overrides(true);
     node_options.parameter_overrides({{"use_sim_time", rclcpp::ParameterValue(true)}});
     auto move_group_node = rclcpp::Node::make_shared("move_group_interface_cpp", node_options);
-    //static const std::string PLANNING_GROUP = "ur10_arm";
-    // auto move_group = std::make_shared<moveit::planning_interface::MoveGroupInterface>(move_group_node, PLANNING_GROUP);
     robot_model_loader::RobotModelLoader robot_model_loader(move_group_node);
     const moveit::core::RobotModelPtr& kinematic_model = robot_model_loader.getModel();
 

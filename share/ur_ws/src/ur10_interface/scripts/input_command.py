@@ -127,7 +127,6 @@ class InputPublisher(Node):
         elif  keys[pygame.K_x]: self.button[0] = 5.0 # speed up
         elif  keys[pygame.K_z]: self.button[0] = 4.0 # speed down
         else:                   self.button[0] = -1.0
-        
         return self.human_agent_action, self.button  
 
 
