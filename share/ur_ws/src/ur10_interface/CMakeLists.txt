@@ -50,12 +50,14 @@ ament_python_install_package(${PROJECT_NAME}) # rosidl_generate_interfaces에서
 
 # install python executables
 install(PROGRAMS
+  scripts/current_ee_pose.py
   scripts/input_command.py
   scripts/mode_manager.py
   scripts/delta_target_input.py
   scripts/target_pose.py
   scripts/teleop_controller.py
   scripts/visualize_target_pose.py
+  scripts/tool_gravity.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -124,6 +124,8 @@ class InputPublisher(Node):
         # Mode and speed
         if    keys[pygame.K_1]: self.button[0] = 6.0 # init mode
         elif  keys[pygame.K_2]: self.button[0] = 7.0 # teleop mode
+        elif  keys[pygame.K_3]: self.button[0] = 12.0 # gravity compensation mode
+        elif  keys[pygame.K_4]: self.button[0] = 13.0 # gravity compensation mode
         elif  keys[pygame.K_x]: self.button[0] = 5.0 # speed up
         elif  keys[pygame.K_z]: self.button[0] = 4.0 # speed down
         else:                   self.button[0] = -1.0

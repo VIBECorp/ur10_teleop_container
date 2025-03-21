@@ -51,6 +51,16 @@ def generate_launch_description():
     )
     
     ## Nodes
+    aft_can_node = Node(
+        package='aft_can',
+        executable='aft_can_rx_node',
+        )
+    
+    aft_filtered_node = Node(
+        package='aft_can',
+        executable='aft_filtered_node.py',
+        )
+    
     input_node = Node(
         package="ur10_interface",
         executable="input_command.py",
@@ -69,6 +79,13 @@ def generate_launch_description():
     delta_input_node = Node(
         package="ur10_interface",
         executable="delta_target_input.py",
+        output="log",
+        arguments=['--env', env], # to load environment specific config file
+    )
+    
+    ee_pose_node = Node(
+        package="ur10_interface",
+        executable="current_ee_pose.py",
         output="log",
         arguments=['--env', env], # to load environment specific config file
     )
@@ -99,12 +116,22 @@ def generate_launch_description():
         executable="visualize_target_pose.py",
         output="log",
     )
+    
+    grav_comp_node = Node(
+        package="ur10_interface",
+        executable="tool_gravity.py",
+        output="log",
+        arguments=['--env', env], # to load environment specific config file
+    )
 
 
     return LaunchDescription([
         declare_arguments(),
         SetParameter(name='use_sim_time', value=use_sim_time), # set "use_sim_time" to true for all instances in the launch file
         #move_group_launch,
+        aft_can_node,
+        aft_filtered_node,
+        ee_pose_node,
         input_node,
         mode_manager_node,
         delta_input_node,
@@ -112,4 +139,5 @@ def generate_launch_description():
         task2joint_node,
         teleop_controller_node,
         visualize_target_pose_node,
+        grav_comp_node,
     ])

@@ -28,6 +28,8 @@ const int JOINT_CONTROL = 3;
 const int AI = 4;
 const int MOVEIT = 5;
 const int IDLE = 6;
+const int GCOMP = 7;
+const int DIRECT = 8;
 
 // Node class
 class Task2JointNode : public rclcpp::Node {
@@ -251,7 +253,7 @@ private:
         //     RCLCPP_INFO(this->get_logger(), "Joint %ld %s", i, joint_names[i].c_str());
         // }
         updateCurrentPoseRPY();
-        if (mode == TELEOP || mode == TASK_CONTROL || mode == AI) {
+        if (mode == TELEOP || mode == TASK_CONTROL || mode == AI || mode == GCOMP || mode == DIRECT) {
             // Solve IK
             // RCLCPP_INFO(this->get_logger(), "Solve IK");
             bool success = solve_ik(current_target_pose.pose);
@@ -279,8 +281,10 @@ private:
             ik_success_pub_->publish(ik_success_msg);
         } else if (mode == INIT) {
             // RCLCPP_INFO(this->get_logger(), "INIT");
-            ik_result = {0.0, -1.8397, 2.03, -0.2435, 1.5615, 0.0}; // must be joint_states of INIT pose
-            pre_ik_result = {0.0, -1.8397, 2.03, -0.2435, 1.5615, 0.0}; // must be joint_states of INIT pose
+            // ik_result = {0.0, -1.8397, 2.03, -0.2435, 1.5615, 0.0}; // must be joint_states of INIT pose
+            // pre_ik_result = {0.0, -1.8397, 2.03, -0.2435, 1.5615, 0.0}; // must be joint_states of INIT pose
+            ik_result = current_joint_position;
+            pre_ik_result = current_joint_position;
         }
 
     }

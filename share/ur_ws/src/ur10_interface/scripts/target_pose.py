@@ -23,6 +23,8 @@ JOINT_CONTROL = 3
 AI = 4
 MOVEIT = 5
 IDLE = 6
+GCOMP = 7
+DIRECT = 8
 
 mode_dict = {
     0: "INIT",
@@ -32,16 +34,19 @@ mode_dict = {
     4: "AI",
     5: "MOVEIT",
     6: "IDLE",
+    7: "GCOMP",
+    8: "DIRECT"
 }
 
 
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Quaternion, PoseStamped
+import tf2_ros
+from geometry_msgs.msg import Quaternion, PoseStamped, TransformStamped, Wrench
 from std_msgs.msg import Float64MultiArray, Int32, Bool
 from std_srvs.srv import Trigger
 from tutorial_interfaces.srv import SetTargetPose
-from tf_transformations import quaternion_from_euler
+from tf_transformations import quaternion_from_euler, quaternion_matrix, euler_from_quaternion
 
 
 class TargetPose(Node):
@@ -62,12 +67,22 @@ class TargetPose(Node):
         self.delta_target_input = [0.0] * 6
         self.ik_success = False
         self.target_pose_msg = self.update_target_pose()
+        self.current_pose = None
+        self.current_tf_ft = None
+        self.force_th = self.config['force_thresh']
+        self.force_pose_gain = self.config['force_pose_gain']
+        
+        # Listener
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
         # Publishers & Subscribers
         self.target_pose_pub = self.create_publisher(PoseStamped, "target_pose", 10)
         self.create_subscription(Float64MultiArray, 'delta_target_input', self.delta_target_input_callback, 10)
         self.create_subscription(Int32, 'mode', self.mode_callback, 10)
         self.create_subscription(Bool, 'ik_success', self.ik_success_callback, 10)
+        self.create_subscription(PoseStamped, 'current_ee_pose', self.current_pose_callback, 10)
+        self.create_subscription(Wrench, 'compensated_ft_wrt_base', self.comp_ft_callback, 10)
         
         # Services & Clients
         self.create_service(Trigger, 'reset_target_pose', self.reset_target_pose)
@@ -76,17 +91,73 @@ class TargetPose(Node):
         # Timer
         self.timer = self.create_timer(1.0 / 250, self.loop)
         
+    
+    def comp_ft_callback(self, msg):
+        temp = [msg.force.x,
+                msg.force.y,
+                msg.force.z,
+                msg.torque.x,
+                msg.torque.y,
+                msg.torque.z]
+        self.current_tf_ft = np.array(temp[:])
+        
+        
+    def direct_teaching_pose_update(self):
+        delta_target = np.zeros(6)
+        
+        if self.current_tf_ft is None:
+            pass
+        else:
+            idx = np.where(np.abs(self.current_tf_ft[:3]) >= self.force_th)[0]
+            if len(idx) > 0:
+                delta_target[idx] = (np.sign(self.current_tf_ft)[idx] * np.abs(self.current_tf_ft)[idx] - self.force_th) * self.force_pose_gain
+                print(delta_target)
+            
+                for i in range(len(self.target_pose)):
+                    self.target_pose[i] += delta_target[i]
+                # print(self.target_pose)
+            else:
+                self.set_target_as_current(self.current_pose)
+        
+    
+    def current_pose_callback(self, msg):
+        self.current_pose = msg
+        
+        
     def loop(self):
+        if self.current_pose is None:
+            self.get_logger().info("Current pose is None")
+            return
+        # self.get_logger().info(f"Current pose: {self.current_pose}")
+        
         mode = self.mode
-        self.get_logger().info(f"Env: {self.env}, Mode: {mode_dict[mode]}")
-        if mode == INIT:
-            self.target_pose = copy.deepcopy(self.init_pose)
-            if self.current_mode != mode: self.get_logger().info("Target pose initialized")
-        elif mode in [TELEOP, AI]:
-            self.update_target_pose() # add delta to target pose
-            if self.current_mode != mode: self.get_logger().info("Target pose is updating by delta input")
-        target_pose_msg = self.convert_to_pose_msg(self.target_pose)
-        self.target_pose_pub.publish(target_pose_msg)
+        if mode in [INIT, TELEOP, AI, DIRECT]:
+            # self.get_logger().info(f"Env: {self.env}, Mode: {mode_dict[mode]}")
+            if mode == INIT:
+                self.set_target_as_current(self.current_pose)
+                target_pose_msg = self.current_pose
+                if self.current_mode != mode: self.get_logger().info("Target pose becomes current pose")
+                
+                # self.target_pose = copy.deepcopy(self.init_pose)
+                # # self.get_logger().info(f"Init pose: {self.target_pose}")
+                # if self.current_mode != mode: self.get_logger().info("Target pose initialized")
+                
+                # target_pose_msg = self.convert_to_pose_msg(self.target_pose)
+                
+            
+            elif mode in [TELEOP, AI]:
+                self.update_target_pose() # add delta to target pose
+                if self.current_mode != mode: self.get_logger().info("Target pose is updating by delta input")
+                target_pose_msg = self.convert_to_pose_msg(self.target_pose)
+                
+                
+            elif mode is DIRECT:
+                self.direct_teaching_pose_update()
+                target_pose_msg = self.convert_to_pose_msg(self.target_pose)
+
+            
+            if not target_pose_msg is None:
+                self.target_pose_pub.publish(target_pose_msg)
         
         self.current_mode = mode
         
@@ -127,9 +198,35 @@ class TargetPose(Node):
         ps.pose.orientation = target_orientation
 
         return ps
+    
+    def set_target_as_current(self, pose_stamped: PoseStamped):
+        # 위치 (Translation)
+        translation = (
+            pose_stamped.pose.position.x,
+            pose_stamped.pose.position.y,
+            pose_stamped.pose.position.z
+        )
+
+        # Quaternion -> Euler 변환
+        quaternion = (
+            pose_stamped.pose.orientation.x,
+            pose_stamped.pose.orientation.y,
+            pose_stamped.pose.orientation.z,
+            pose_stamped.pose.orientation.w
+        )
+        euler = euler_from_quaternion(quaternion)  # (roll, pitch, yaw) 반환
+        
+        self.target_pose[0] = translation[0]
+        self.target_pose[1] = translation[1]
+        self.target_pose[2] = translation[2]
+        self.target_pose[3] = euler[0]
+        self.target_pose[4] = euler[1]
+        self.target_pose[5] = euler[2]
+    
 
     def reset_target_pose(self, request, response):
-        self.target_pose = copy.deepcopy(self.init_pose)
+        # self.target_pose = copy.deepcopy(self.init_pose)
+        self.set_target_as_current(self.current_pose)
         response.success = True
         response.message = "Target pose reset"
         return response
@@ -153,7 +250,7 @@ def main(args=None):
     rclpy.init(args=args)
     parser = argparse.ArgumentParser(description="Load YAML config for ROS2 node")
     parser.add_argument("--prefix", type=str, default='', help="Prefix for the node")
-    parser.add_argument("--env", type=str, default='gazebo', help="Path to config.yaml file")
+    parser.add_argument("--env", type=str, default='real', help="Path to config.yaml file")
     args, _ = parser.parse_known_args()  # 🔹 `parse_known_args()`를 사용하여 ROS2 인자 무시
     
     # instantiate node

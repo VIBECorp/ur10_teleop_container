@@ -20,6 +20,8 @@ JOINT_CONTROL = 3
 AI = 4
 MOVEIT = 5
 IDLE = 6
+GCOMP = 7
+DIRECT = 8
 
 mode_dict = {
     0: "INIT",
@@ -29,6 +31,8 @@ mode_dict = {
     4: "AI",
     5: "MOVEIT",
     6: "IDLE",
+    7: "GCOMP",
+    8: "DIRECT",
 }
 
 ## standard library
@@ -37,7 +41,7 @@ import numpy as np
 ## ros library
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float64MultiArray
+from std_msgs.msg import Float64MultiArray, Int32
 from sensor_msgs.msg import JointState
 
 ## Function Definition
@@ -79,14 +83,32 @@ class TeleopController(Node):
             '/joint_states', 
             self.current_joint_callback, 
             10)
+        
+        self.create_subscription(Int32, 'mode', self.mode_callback, 10)
 
         # Publisher 설정
         self.vel_pub = self.create_publisher(Float64MultiArray, f'/{self.velocity_controller}/commands', 10)
 
         # 타이머를 사용하여 주기적으로 control_loop 실행
         self.timer = self.create_timer(1.0 / 250.0, self.control_loop)  # 250Hz 실행
+        
+    def mode_callback(self, msg):
+        self.mode = msg.data
 
     def control_loop(self):
+        # self.joint_vel_msg.data = np.zeros(6)
+        # if self.mode == TELEOP or self.mode == DIRECT:
+        #     try:
+        #         # Compute control input
+        #         joint_errors = np.array(self.target_joints) - np.array(self.current_joints)
+        #         self.joint_vel_msg.data = self.p_gain * joint_errors + self.d_gain * (joint_errors - self.pre_joint_errors)
+        #         self.pre_joint_errors = joint_errors
+        #     except Exception as e:
+        #         self.joint_vel_msg.data = np.zeros(6)
+                
+        # self.vel_pub.publish(self.joint_vel_msg)
+        self.joint_vel_msg.data = np.zeros(6)
+
         try:
             # Compute control input
             joint_errors = np.array(self.target_joints) - np.array(self.current_joints)
@@ -94,8 +116,9 @@ class TeleopController(Node):
             self.pre_joint_errors = joint_errors
         except Exception as e:
             self.joint_vel_msg.data = np.zeros(6)
-
+                
         self.vel_pub.publish(self.joint_vel_msg)
+
 
     def stop(self):
         self.joint_vel_msg.data = np.zeros(6)
