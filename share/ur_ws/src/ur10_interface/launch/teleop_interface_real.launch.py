@@ -123,6 +123,23 @@ def generate_launch_description():
         output="log",
         arguments=['--env', env], # to load environment specific config file
     )
+    
+    touch_comm_node = Node(
+        package="touch_interface",
+        executable="touch_node.py",
+        output="log",
+        parameters=[
+            {'port': '/root/share/ttyUSB0'},  # Adjust the port as needed
+            {'baudrate': 115200},  # Adjust the baudrate as needed
+        ]
+    )
+    
+    record_node = Node(
+        package="ur10_interface",
+        executable="record_and_play.py",
+        output="log",
+        arguments=['--env', env], # to load environment specific config file
+    )
 
 
     return LaunchDescription([
@@ -140,4 +157,6 @@ def generate_launch_description():
         teleop_controller_node,
         visualize_target_pose_node,
         grav_comp_node,
+        touch_comm_node,
+        record_node,
     ])

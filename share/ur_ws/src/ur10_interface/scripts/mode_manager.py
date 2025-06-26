@@ -9,18 +9,29 @@ import numpy as np
 import copy
 import json
 
-from ament_index_python.packages import get_package_share_directory
+# ROS2 library
+import rclpy
+# import rclpy.duration
+from rclpy.duration import Duration as rDuration
+from rclpy.node import Node
+from std_msgs.msg import Float64MultiArray, Int32, Bool, String
+from geometry_msgs.msg import Wrench, PoseStamped
+from sensor_msgs.msg import JointState
+from builtin_interfaces.msg import Duration
+from controller_manager_msgs.srv import SwitchController, ListControllers
+from moveit.planning import MoveItPy
+from moveit_msgs.action import MoveGroup
+from rclpy.action import ActionClient
+from control_msgs.action import FollowJointTrajectory
+from moveit.core.robot_state import RobotState
+from tool_gravity import ToolGravityCompensation
+from scipy.spatial.transform import Rotation as R
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
-def get_package_dir(package_name):
-    share_dir = get_package_share_directory(package_name)
-    package_dir = share_dir.replace('install', 'src').removesuffix(f'/share/{package_name}')
-    return package_dir
+import threading
 
-def get_file_dir(package_name, file_name):
-    pkg_dir = get_package_dir(package_name)
-    file_dir = os.path.join(pkg_dir, file_name)
-    return file_dir
-    
+from utils import get_package_dir, get_file_dir, compress_with_indices, list_to_pose_stamped
+
 
 # mode
 INIT = 0
@@ -31,7 +42,9 @@ AI = 4
 MOVEIT = 5
 IDLE = 6
 GCOMP = 7
-DIRECT = 8
+DIRECT_TRANS = 8
+DIRECT_ROT = 9
+REPLAY = 10
 
 mode_dict = {
     0: "INIT",
@@ -42,7 +55,9 @@ mode_dict = {
     5: "MOVEIT",
     6: "IDLE",
     7: "GCOMP",
-    8: "DIRECT",
+    8: "DIRECT_TRANS",
+    9: "DIRECT_ROT",
+    10: "REPLAY",
     -1: "READY",
 }
 
@@ -51,19 +66,6 @@ axis_dict = {
     1: 'x',
     2: 'y'
 }
-
-# ROS2 library
-import rclpy
-from rclpy.node import Node
-from std_msgs.msg import Float64MultiArray, Int32
-from geometry_msgs.msg import Wrench, PoseStamped
-from sensor_msgs.msg import JointState
-from builtin_interfaces.msg import Duration
-from controller_manager_msgs.srv import SwitchController, ListControllers
-from moveit.planning import MoveItPy
-from moveit.core.robot_state import RobotState
-from tool_gravity import ToolGravityCompensation
-from scipy.spatial.transform import Rotation as R
 
 
 def aligned_joint_position(current_joint_pos, axis='z'):
@@ -123,19 +125,131 @@ def plan_and_execute(
     time.sleep(sleep_time)
     logger.info("Completed execution")
 
+
+
+class RecordedTrajectory:
+    def __init__(self, json_file):
+        data = json.load(open(json_file, 'r'))
+        self.data = data
+        self.num_points = 0
+        self.trj_types = []
+        self.task_poses = []
+        self.joint_positions = []
+        self.tool_config = []
+        self.times = []
+        
+        self.separate_types()
+        
+
+    def separate_types(self):
+        types = self.data['type']
+        comp_types, indices = compress_with_indices(types)
+        self.trj_types = comp_types
+        self.num_points = len(comp_types)
+        joint_positions = np.array(self.data['joint'])
+        task_poses = np.array(self.data['task'])
+        tool_config = np.ones(self.num_points, dtype=np.int32) * -1
+        times = np.array(self.data['time'])
+        
+        
+        if len(self.data['tool']) > 0:
+            tool_config = np.array(self.data['tool'])
+        
+        for i, is_continuous in enumerate(comp_types):
+            if is_continuous:
+                joint_traj = JointTrajectory()
+                joint_traj.joint_names = ['shoulder_pan_joint', 'shoulder_lift_joint', 
+                                          'elbow_joint', 'wrist_1_joint', 'wrist_2_joint', 'wrist_3_joint']
+                c_indices = np.array(indices[i])
+                c_joint_positions = joint_positions[c_indices]
+                c_task_poses = task_poses[c_indices]
+                c_times = times[c_indices]
+                c_times = c_times - c_times[0]  # Normalize time to start from 0
+                
+                for joint_pos, tfs in zip(c_joint_positions, c_times):
+                    point = JointTrajectoryPoint()
+                    point.positions = list(joint_pos)
+                    point.time_from_start = rDuration(nanoseconds=int(tfs)).to_msg()
+                    joint_traj.points.append(point)
+            
+                self.joint_positions.append(joint_traj)
+                self.task_poses.append(c_task_poses)
+                self.times.append(c_times)
+                if i > 0:
+                    self.tool_config.append(tool_config[i])
+                else:
+                    self.tool_config.append(0)
+            
+            else:
+                idx = np.array(indices[i])
+                self.joint_positions.append(joint_positions[idx])
+                self.task_poses.append(task_poses[idx])
+                self.times.append(times[idx])
+                self.tool_config.append(tool_config[i])
+        
+    
+    
+        
+        
+    def get_joint_position(self, idx):
+        if idx >= self.num_points:
+            idx = self.num_points - 1
+        
+        if self.trj_types[idx] == False:
+            return list(self.joint_positions[idx][0])
+        else:
+            return self.joint_positions[idx]
+    
+        
+    def get_task_pose(self, idx):
+        if idx >= self.num_points:
+            idx = self.num_points - 1
+        
+        if self.trj_types[idx] == False:
+            return list_to_pose_stamped(self.task_poses[idx][0])
+        
+        else:
+            output = []
+            for p in self.task_poses[idx]:
+                output.append(list_to_pose_stamped(p))
+            return output
+    
+    
+    def get_tool_config(self, idx):
+        if idx >= self.num_points:
+            idx = self.num_points - 1
+        return self.tool_config[idx]
+
+
+    def get_time(self, idx):
+        if idx >= self.num_points:
+            idx = self.num_points - 1
+        
+        return self.times[idx]
+
+        
+    def get_target(self, idx):
+        return self.trj_types[idx], self.get_joint_position(idx), self.get_task_pose(idx), self.get_tool_config(idx), self.get_time(idx)
+
+
+
 class ModeManager(Node):
     def __init__(self, args, ur10_moveit_py):
         super().__init__('mode_manager_node')
         
         # load parameters
         self.load_parameters_from_config(args)
+        
         self.button = 0.0
         self.mode = -1 # self.config['mode']
+        self.mode_from_touch = -1
+        
         self.base_controller = self.config['base_controller']
         self.velocity_controller = self.config['velocity_controller']
         self.planning_group = self.config['planning_group']
         # self.init_joint_states = self.config['init_joint_states']
         self.current_pose = None
+        self.current_joint_velocity = [0.0] * 6
         self.run_gcomp = False
         self.current_joint_states = None
         self.init_joint_states = None
@@ -152,6 +266,18 @@ class ModeManager(Node):
         self.tool_cg_path = get_file_dir('ur10_interface', self.config['tool_cg_saved'])
         self.tool_cg = None
         
+        # Record and Play
+        self.trajectory_filename = os.path.join(self.config['trajectory_saving_path'], self.config['trajectory_saving_name'])
+        if os.path.exists(self.trajectory_filename):
+            self.recorded_trajectory = RecordedTrajectory(self.trajectory_filename)
+        else:
+            self.recorded_trajectory = None
+        self.play_saved = False
+        self.is_playing = False
+        self.pause = False
+        self.start_play = False
+        
+        
         # planning component
         self.ur10_moveit_py = ur10_moveit_py
         self.ur10_arm = ur10_moveit_py.get_planning_component(self.planning_group)
@@ -161,6 +287,7 @@ class ModeManager(Node):
 
         # publisher & subscriber
         self.mode_pub = self.create_publisher(Int32, 'mode', 10)
+        self.create_subscription(Int32, 'mode_from_touch', self.mode_from_touch_callback, 10)
         self.joystick_command_sub = self.create_subscription(Float64MultiArray, 'joystick_command', self.joystick_command_callback, 10)
         self.keyboard_command_sub = self.create_subscription(Float64MultiArray, 'keyboard_command', self.keyboard_command_callback, 10)
         self.joint_state_sub = self.create_subscription(JointState, 'joint_states', self.joint_state_callback, 10)
@@ -168,13 +295,23 @@ class ModeManager(Node):
         self.ft_wrench_sub = self.create_subscription(Wrench, self.config['ft_sensor_node'], self.ft_data_callback, 10)
         # self.tf_ft_sub = self.create_subscription(Wrench, self.config['tf_ft_node'], self.tf_ft_data_callback, 10)
         self.create_subscription(PoseStamped, 'current_ee_pose', self.current_pose_callback, 10)
+        self.target_pose_pub = self.create_publisher(PoseStamped, "target_pose", 10)
+        # Trajectory file
+        self.create_subscription(String, 'trajectory_filename', self.trj_file_name_callback, 10)
+        
+        self.update_ft_thresh_pub = self.create_publisher(Bool, 'update_ft_thresh', 10)
         
         # service
         self.switch_controller_client = self.create_client(SwitchController, '/controller_manager/switch_controller')
         self.list_controller_client = self.create_client(ListControllers, '/controller_manager/list_controllers')
 
+        # Action client
+        self.joint_traj_client = ActionClient(self, FollowJointTrajectory, f'/{self.base_controller}/follow_joint_trajectory')
+        
+        
         # initialize pose
         self.set_parameters([rclpy.parameter.Parameter('mode', rclpy.Parameter.Type.INTEGER, INIT)])
+        self.mode_from_touch = 0
         # self.change_to_base_controller()
         # # delay
         # time.sleep(2.0)
@@ -182,6 +319,90 @@ class ModeManager(Node):
 
         # mode loop
         self.timer = self.create_timer(0.001, self.loop)
+        
+        self.create_subscription(Bool, "/shutdown", self.shutdown_callback, 10)
+        
+    def shutdown_callback(self, msg):
+        if msg.data:
+            self.is_playing = False
+            self.play_saved = False
+            self.start_play = False
+            self.start_saving = False
+            
+            
+            self.change_to_base_controller()
+            self.set_current_pose_as_init()
+            
+            rclpy.shutdown()
+        
+    
+    def mode_from_touch_callback(self, msg):
+        self.mode_from_touch = msg.data
+    
+        
+    def trj_file_name_callback(self, msg):
+        self.trajectory_filename = msg.data
+        if os.path.exists(self.trajectory_filename):
+            self.recorded_trajectory = RecordedTrajectory(self.trajectory_filename)
+        
+        
+    def play_recorded(self):
+        if self.is_playing:
+            self.get_logger().info("Already playing trajectory.")
+            return
+        
+        if not self.recorded_trajectory is None and self.is_playing is False:
+            self.start_play = False
+            self.is_playing = True
+            self.get_logger().info(f"Playing trajectory from {self.trajectory_filename}")
+            for i in range(self.recorded_trajectory.num_points):
+                if self.is_playing == False:
+                    self.get_logger().info("Stopped playing trajectory.")
+                    break
+                # joint_pos, tool_config, time = self.recorded_trajectory.get_target(i, mode='joint')
+                is_continuous, joint_pos, task_pose, tool_config, task_time = self.recorded_trajectory.get_target(i)
+                
+                if not is_continuous:
+                    self.target_pose_pub.publish(task_pose)
+                    self.get_logger().info(f"Playing point {i+1}/{self.recorded_trajectory.num_points}: Joint Position: {joint_pos}, Tool Config: {tool_config}, time: {time}")
+                    self.move_to_target_joint_pos(joint_pos)
+                    # while np.sum(np.abs(np.array(self.current_joint_velocity))) < 0.01:
+                    #     time.sleep(0.01)
+                    #     self.get_logger().info("Waiting for joint velocity to stabilize...")
+                    if task_time > 0:
+                        time.sleep(task_time)
+                else:
+                    if not self.joint_traj_client.wait_for_server(timeout_sec=5.0):
+                        self.get_logger().error("Joint trajectory action server is not available!")
+                        return
+                    
+                    goal_msg = FollowJointTrajectory.Goal()
+                    goal_msg.trajectory = joint_pos
+                    trj_init = joint_pos.points[0]
+                    trj_init_joint_pos = list(trj_init.positions)
+                    self.get_logger().info(f"Go to initial pose of the trajectory.")
+                    self.move_to_target_joint_pos(trj_init_joint_pos)
+                    # self.get_logger().info(f"{trj_init_joint_pos}")
+                    
+                    self.get_logger().info("Sending joint trajectory goal...")
+                    send_goal_future = self.joint_traj_client.send_goal_async(goal_msg)
+                    rclpy.spin_until_future_complete(self, send_goal_future)
+                    goal_handle = send_goal_future.result()
+                    
+                    if not goal_handle.accepted:
+                        self.get_logger().error("Trajectory goal rejected.")
+                    self.get_logger().info("Trajectory accepted. Waiting for result...")
+                    
+                    get_result_future = goal_handle.get_result_async()
+                    rclpy.spin_until_future_complete(self, get_result_future)
+                    result = get_result_future.result().result
+                    if result:
+                        self.get_logger().info("Reached destination.")
+                    
+            self.is_playing = False
+            self.get_logger().info("Finished playing trajectory.")
+            
+        
         
     def current_pose_callback(self, msg):
         self.current_pose = msg
@@ -253,8 +474,18 @@ class ModeManager(Node):
         temp2[4] = temp[3]
         temp2[5] = temp[4]
         self.current_joint_states = temp2
-        # self.init_joint_states = list(self.current_joint_states)
-        # self.get_logger().info(f"Current joint states: {self.current_joint_states}")
+        
+        temp = list(msg.velocity)
+        temp2 = temp[:]  # 깊은 복사 (Shallow Copy)
+
+        # 인덱스 변경
+        temp2[0] = temp[5]
+        temp2[1] = temp[0]
+        temp2[2] = temp[1]
+        temp2[3] = temp[2]
+        temp2[4] = temp[3]
+        temp2[5] = temp[4]
+        self.current_joint_velocity = temp2
     
         
     def load_parameters_from_config(self, args):
@@ -279,36 +510,57 @@ class ModeManager(Node):
 
     def loop(self):
         if self.current_joint_states is None:
-            self.get_logger().info("Joint states is None. Waiting...")
+            # self.get_logger().info("Joint states is None. Waiting...")
             return
         #self.get_logger().info(f"Mode: {mode_dict[self.mode]}")
         # mode change by input
-        if self.button == 6.0:
+        if self.button == 6.0 or self.mode_from_touch == INIT:
             self.set_parameters([rclpy.parameter.Parameter('mode', rclpy.Parameter.Type.INTEGER, INIT)])
-        elif self.button == 7.0:
+        elif self.button == 7.0 or self.mode_from_touch == TELEOP:
             self.set_parameters([rclpy.parameter.Parameter('mode', rclpy.Parameter.Type.INTEGER, TELEOP)])
         elif self.button == 12.0:
             self.set_parameters([rclpy.parameter.Parameter('mode', rclpy.Parameter.Type.INTEGER, GCOMP)])
-        elif self.button == 13.0:
-            self.set_parameters([rclpy.parameter.Parameter('mode', rclpy.Parameter.Type.INTEGER, DIRECT)])
+        elif self.button == 13.0 or self.mode_from_touch == DIRECT_TRANS:
+            self.set_parameters([rclpy.parameter.Parameter('mode', rclpy.Parameter.Type.INTEGER, DIRECT_TRANS)])
+        elif self.button == 14.0 or self.mode_from_touch == DIRECT_ROT:
+            self.set_parameters([rclpy.parameter.Parameter('mode', rclpy.Parameter.Type.INTEGER, DIRECT_ROT)])
+        elif self.button == 15.0 or self.mode_from_touch == REPLAY:
+            self.set_parameters([rclpy.parameter.Parameter('mode', rclpy.Parameter.Type.INTEGER, REPLAY)])
+            
+        # if self.button == 6.0:
+        #     self.set_parameters([rclpy.parameter.Parameter('mode', rclpy.Parameter.Type.INTEGER, INIT)])
+        # elif self.button == 7.0:
+        #     self.set_parameters([rclpy.parameter.Parameter('mode', rclpy.Parameter.Type.INTEGER, TELEOP)])
+        # elif self.button == 12.0:
+        #     self.set_parameters([rclpy.parameter.Parameter('mode', rclpy.Parameter.Type.INTEGER, GCOMP)])
+        # elif self.button == 13.0:
+        #     self.set_parameters([rclpy.parameter.Parameter('mode', rclpy.Parameter.Type.INTEGER, DIRECT_TRANS)])
+        # elif self.button == 14.0:
+        #     self.set_parameters([rclpy.parameter.Parameter('mode', rclpy.Parameter.Type.INTEGER, DIRECT_ROT)])
+        # elif self.button == 15.0:
+        #     self.set_parameters([rclpy.parameter.Parameter('mode', rclpy.Parameter.Type.INTEGER, REPLAY)])
         # read current mode
         mode = self.get_parameter('mode').get_parameter_value().integer_value
+        # mode = self.current_mode
         self.mode_pub.publish(Int32(data=mode))
+        self.mode_from_touch = -1
         
         # if mode changed
         if mode is not self.mode:
             self.get_logger().info(f"Mode changed from {mode_dict[self.mode]} to {mode_dict[mode]}")
             # switch controller interface
-            if mode in [INIT, MOVEIT, GCOMP]:
+            if mode in [INIT, MOVEIT, GCOMP, REPLAY]:
                 self.change_to_base_controller()
                 if mode == GCOMP:
                     self.set_current_pose_as_init()
                     self.get_logger().info("Gravity compensation mode")
                     self.run_gcomp = True
                 else:
+                    self.current_index = 0
                     self.run_gcomp = False
                     
-            elif mode in [TELEOP, TASK_CONTROL, JOINT_CONTROL, IDLE, AI, DIRECT]:
+            elif mode in [TELEOP, TASK_CONTROL, JOINT_CONTROL, IDLE, AI, DIRECT_TRANS, DIRECT_ROT]:
+                self.current_index = 0
                 self.run_gcomp = False
                 self.change_to_velocity_controller()
 
@@ -343,7 +595,9 @@ class ModeManager(Node):
                 self.get_logger().info("Initial pose")
                 self.move_to_target_joint_pos(self.init_joint_states)
                 self.run_gcomp = False
-                
+                msg = Bool()
+                msg.data = True
+                self.update_ft_thresh_pub.publish(msg=msg)
                 try:
                     if os.path.exists(self.ft_saving_path) and os.path.exists(self.zero_ft_saving_path):
                         cgTool = ToolGravityCompensation(self.ft_saving_path, self.zero_ft_saving_path)
@@ -354,7 +608,22 @@ class ModeManager(Node):
                 except:
                     pass
                     
-
+        if mode == REPLAY:
+            if self.button == 103.0 and not self.is_playing:
+                self.start_play = True
+                self.play_thread = threading.Thread(target=self.play_recorded)
+                self.play_thread.start()
+                self.get_logger().info("Replay started.")
+            elif self.button == 104.0:
+                self.pause = True
+            elif self.button == 105.0:
+                self.start_play = False
+                self.pause = False
+                self.is_playing = False
+                
+                self.get_logger().info("Replay stopped.")
+            
+                
             # update mode
             # self.mode = mode
         
@@ -426,16 +695,7 @@ class ModeManager(Node):
         return True
         #rclpy.spin_until_future_complete(self, future)
 
-        # if future.done() and future.result() is not None:
-        #     if future.result().ok:
-        #         self.get_logger().info(f'Successfully switched controllers: Activated {activate_controllers}, Deactivated {deactivate_controllers}')
-        #         return True
-        #     else:
-        #         self.get_logger().error('Controller switch failed!')
-        #         return False
-        # else:
-        #     self.get_logger().error('Service call timed out or failed.')
-        #     return False
+
     
     def get_active_controllers(self):
         if not self.list_controller_client.wait_for_service(timeout_sec=5.0):
@@ -451,32 +711,7 @@ class ModeManager(Node):
         # self.get_logger().info(f'Active Controllers: {active_controllers}')
         return True
 
-        # try:
-        #     # 🟢 동기 서비스 호출 (10초 대기)
-        #     future = self.list_controller_client.call(req)
-        #     if future is not None:
-        #         controllers = future.controller
-        #         active_controllers = [c.name for c in controllers if c.state == 'active']
-        #         self.get_logger().info(f'Active Controllers: {active_controllers}')
-        #         return active_controllers
-        #     else:
-        #         self.get_logger().error('Received empty response from service!')
-        #         return []
-        # except Exception as e:
-        #     self.get_logger().error(f'Service call failed: {str(e)}')
-        #     return []
 
-        # future = self.list_controller_client.call_async(ListControllers.Request())
-        # rclpy.spin_until_future_complete(self, future)
-
-        # if future.result() is not None:
-        #     controllers = future.result().controller
-        #     active_controllers = [c.name for c in controllers if c.state == 'active']
-        #     self.get_logger().info(f'Active Controllers: {active_controllers}')
-        #     return active_controllers
-        # else:
-        #     self.get_logger().error('Failed to get controller list!')
-        #     return []
 
 def main(args=None):
     # initialize ros2 node

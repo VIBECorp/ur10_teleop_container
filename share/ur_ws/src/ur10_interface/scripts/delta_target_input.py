@@ -8,12 +8,7 @@ import time
 import numpy as np
 import copy
 
-from ament_index_python.packages import get_package_share_directory
-
-def get_package_dir(package_name):
-    share_dir = get_package_share_directory(package_name)
-    package_dir = share_dir.replace('install', 'src').removesuffix(f'/share/{package_name}')
-    return package_dir
+from utils import get_package_dir, get_file_dir
 
 # mode
 INIT = 0
@@ -37,7 +32,7 @@ mode_dict = {
 # ROS2 library
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float64MultiArray, Int32
+from std_msgs.msg import Float64MultiArray, Int32, Bool
 
 class DeltaTargetInput(Node):
     def __init__(self, args, fps=250):
@@ -75,6 +70,12 @@ class DeltaTargetInput(Node):
         # Timer
         self.timer = self.create_timer(1.0 / fps, self.loop)
         
+        self.create_subscription(Bool, "/shutdown", self.shutdown_callback, 10)
+        
+    def shutdown_callback(self, msg):
+        if msg.data:            
+            rclpy.shutdown()
+        
     def load_parameters_from_config(self, args):
         # config 파일 로드
         config_path = os.path.join(get_package_dir("ur10_interface"), 'config', f"config_{args.env}.yaml")
@@ -90,8 +91,8 @@ class DeltaTargetInput(Node):
         x_input = command[1]
         y_input = command[0]
         z_input = command[2]
-        roll_input = command[3]
-        pitch_input = command[4]
+        roll_input = command[4]
+        pitch_input = command[3]
         yaw_input = command[5]
         button = int(command[6])
 

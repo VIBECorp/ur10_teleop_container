@@ -58,6 +58,7 @@ install(PROGRAMS
   scripts/teleop_controller.py
   scripts/visualize_target_pose.py
   scripts/tool_gravity.py
+  scripts/record_and_play.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

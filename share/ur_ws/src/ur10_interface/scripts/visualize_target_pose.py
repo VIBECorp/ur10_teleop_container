@@ -2,6 +2,7 @@
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped, TransformStamped
+from std_msgs.msg import Bool
 import tf2_ros
 
 
@@ -18,6 +19,12 @@ class TargetPoseMarker(Node):
             self.pose_callback,
             10
         )
+        
+        self.create_subscription(Bool, "/shutdown", self.shutdown_callback, 10)
+        
+    def shutdown_callback(self, msg):
+        if msg.data:
+            rclpy.shutdown()
 
     def pose_callback(self, msg):
         # self.get_logger().info(f"Received Target Pose: x={msg.pose.position.x}, y={msg.pose.position.y}, z={msg.pose.position.z}")

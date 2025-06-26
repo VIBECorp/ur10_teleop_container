@@ -5,12 +5,7 @@ import yaml
 import os
 import numpy as np
 
-from ament_index_python.packages import get_package_share_directory
-
-def get_package_dir(package_name):
-    share_dir = get_package_share_directory(package_name)
-    package_dir = share_dir.replace('install', 'src').removesuffix(f'/share/{package_name}')
-    return package_dir
+from utils import get_package_dir, get_file_dir
 
 # mode
 INIT = 0
@@ -41,7 +36,7 @@ import numpy as np
 ## ros library
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float64MultiArray, Int32
+from std_msgs.msg import Float64MultiArray, Int32, Bool
 from sensor_msgs.msg import JointState
 
 ## Function Definition
@@ -92,6 +87,14 @@ class TeleopController(Node):
         # 타이머를 사용하여 주기적으로 control_loop 실행
         self.timer = self.create_timer(1.0 / 250.0, self.control_loop)  # 250Hz 실행
         
+        self.create_subscription(Bool, "/shutdown", self.shutdown_callback, 10)
+        
+    def shutdown_callback(self, msg):
+        if msg.data:
+            self.joint_vel_msg.data = np.zeros(6)    
+            self.vel_pub.publish(self.joint_vel_msg)    
+            rclpy.shutdown()
+        
     def mode_callback(self, msg):
         self.mode = msg.data
 
@@ -113,6 +116,10 @@ class TeleopController(Node):
             # Compute control input
             joint_errors = np.array(self.target_joints) - np.array(self.current_joints)
             self.joint_vel_msg.data = self.p_gain * joint_errors + self.d_gain * (joint_errors - self.pre_joint_errors)
+            # vel_command = self.p_gain * joint_errors + self.d_gain * (joint_errors - self.pre_joint_errors)
+            # idx = np.where(vel_command < 0.000001)
+            # vel_command[idx] = 0.0
+            # self.joint_vel_msg.data = vel_command
             self.pre_joint_errors = joint_errors
         except Exception as e:
             self.joint_vel_msg.data = np.zeros(6)

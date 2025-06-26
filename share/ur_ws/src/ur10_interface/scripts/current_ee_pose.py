@@ -4,15 +4,11 @@ import rclpy
 from rclpy.node import Node
 import tf2_ros
 from geometry_msgs.msg import TransformStamped, PoseStamped
+from std_msgs.msg import Bool
 import yaml
 import os
 import argparse
-from ament_index_python.packages import get_package_share_directory
-
-def get_package_dir(package_name):
-    share_dir = get_package_share_directory(package_name)
-    package_dir = share_dir.replace('install', 'src').removesuffix(f'/share/{package_name}')
-    return package_dir
+from utils import get_package_dir, get_file_dir
 
 def transform_to_pose(transform: TransformStamped) -> PoseStamped:
     pose = PoseStamped()
@@ -41,6 +37,12 @@ class TFBroadcaster(Node):
         
         # 업데이트 속도를 100Hz로 설정 (0.01초마다 실행)
         self.timer = self.create_timer(0.01, self.publish_pose)
+        
+        self.create_subscription(Bool, "/shutdown", self.shutdown_callback, 10)
+        
+    def shutdown_callback(self, msg):
+        if msg.data:            
+            rclpy.shutdown()
         
     def get_pose(self, from_frame: str, to_frame: str) -> PoseStamped:
         try:

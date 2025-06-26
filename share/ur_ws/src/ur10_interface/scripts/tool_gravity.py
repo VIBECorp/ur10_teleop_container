@@ -7,6 +7,17 @@ import json
 import matplotlib.pyplot as plt
 from scipy.optimize import least_squares
 
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import Float64MultiArray, Int32, Bool
+from geometry_msgs.msg import Wrench, PoseStamped
+from sensor_msgs.msg import JointState
+from scipy.spatial.transform import Rotation as R
+from tf_transformations import quaternion_from_euler, quaternion_matrix, euler_from_quaternion
+import yaml
+
+from utils import get_package_dir, get_file_dir
+
 labels = ['fx', 'fy', 'fz', 'tx', 'ty', 'tz']
 colors = ['r', 'g', 'b', 'k', 'c', 'm']
 
@@ -101,18 +112,7 @@ class ToolGravityCompensation:
         res = least_squares(func, p_init, args=(F, t))
         
         return res
-        
-        
 
-import rclpy
-from rclpy.node import Node
-from std_msgs.msg import Float64MultiArray, Int32
-from geometry_msgs.msg import Wrench, PoseStamped
-from sensor_msgs.msg import JointState
-from scipy.spatial.transform import Rotation as R
-import yaml
-
-from mode_manager import get_package_dir, get_file_dir
 
 class ToolGravityCompensationNode(Node):
     def __init__(self, args):
@@ -121,6 +121,8 @@ class ToolGravityCompensationNode(Node):
         self.load_parameters_from_config(args)
         self.ft_saving_path = get_file_dir('ur10_interface', self.config['ft_raw_save_to'])
         self.tf_ft_saving_path = get_file_dir('ur10_interface', self.config['tf_ft_save_to'])
+        self.force_thresh_offset = self.config['force_thresh_offset']
+        self.torque_thresh_offset = self.config['torque_thresh_offset']
         self.FT_facing_z = None
         
         self.tool_cg_path = get_file_dir('ur10_interface', self.config['tool_cg_saved'])
@@ -130,13 +132,33 @@ class ToolGravityCompensationNode(Node):
         self.current_ft_data = None
         self.rotated_ft_data = [0] * 6
         
+        self.update_th = False
+        self.measure_for_th = []
+        self.ft_thresh = [0.0] * 6
+        
         self.create_subscription(Wrench, self.config['ft_sensor_node'], self.ft_data_callback, 10)
         self.create_subscription(PoseStamped, 'current_ee_pose', self.current_pose_callback, 10)
+        self.create_subscription(Bool, 'update_ft_thresh', self.update_ft_thresh, 10)
         
         self.comp_ft_wrench_pub = self.create_publisher(Wrench, 'compensated_ft', 10)
         self.tf_comp_pub = self.create_publisher(Wrench, 'compensated_ft_wrt_base', 10)
+        self.comp_norm_pub = self.create_publisher(Float64MultiArray, 'compensated_norm_ft', 10)
+        self.ft_thresh_pub = self.create_publisher(Float64MultiArray, 'ft_thresh', 10)
+        self.update_ft_thresh_pub = self.create_publisher(Bool, 'update_ft_thresh', 10)
         
         self.timer = self.create_timer(1.0, self.get_latest)
+        self.th_timer = self.create_timer(0.1, self.pub_ft_thresh)
+        
+        self.create_subscription(Bool, "/shutdown", self.shutdown_callback, 10)
+        
+    def shutdown_callback(self, msg):
+        if msg.data:
+            rclpy.shutdown()
+        
+        
+    def update_ft_thresh(self, msg):
+        self.update_th = msg.data
+        
         
     def get_latest(self):
         try:
@@ -171,7 +193,9 @@ class ToolGravityCompensationNode(Node):
             
             quat = [qx, qy, qz, qw]
             
-            rot = R.from_quat(quat).as_matrix()
+            euler = euler_from_quaternion(quat)  # (roll, pitch, yaw) 반환
+            
+            rot = R.from_euler('xyz', euler).as_matrix()  # 'xyz' 순서로 회전 행렬 생성
             
             F = self.FT_facing_z[:3]
             T = self.FT_facing_z[3:]
@@ -203,6 +227,12 @@ class ToolGravityCompensationNode(Node):
             
             self.comp_ft_wrench_pub.publish(msg=comp_msg)
             
+            comp_f_norm = np.linalg.norm(np.array(self.compensated_ft[:3]))
+            comp_t_norm = np.linalg.norm(np.array(self.compensated_ft[3:]))
+            ft_array = Float64MultiArray()
+            ft_array.data = np.array([comp_f_norm, comp_t_norm])
+            self.comp_norm_pub.publish(ft_array)
+            
             rFb = rot @ self.compensated_ft[:3]
             rTb = rot @ self.compensated_ft[3:]
             
@@ -215,6 +245,41 @@ class ToolGravityCompensationNode(Node):
             tf_comp_msg.torque.z = rTb[2]
             
             self.tf_comp_pub.publish(msg=tf_comp_msg)
+            
+            if self.update_th:
+                if len(self.measure_for_th) < self.config['thresh_num_measure']:
+                    self.measure_for_th.append([rFb[0], rFb[1], rFb[2], rTb[0], rTb[1], rTb[2]])
+                else:
+                    self.update_th = False
+                    self.cal_ft_threshold()
+                    
+                    self.measure_for_th = []
+                    msg = Bool()
+                    msg.data = self.update_th
+                    self.update_ft_thresh_pub.publish(msg=msg)
+                    
+                    
+    
+    def cal_ft_threshold(self):
+        samples = np.array(self.measure_for_th)
+        ft_min = np.min(samples, axis=0)
+        ft_max = np.max(samples, axis=0)
+        
+        
+        for idx, (Min, Max) in enumerate(zip(ft_min, ft_max)):
+            if np.abs(Min) < np.abs(Max):
+                self.ft_thresh[idx] = np.abs(Max)
+            else:
+                self.ft_thresh[idx] = np.abs(Min)
+        self.ft_thresh = np.array(self.ft_thresh)
+        self.ft_thresh[:3] *= (1.0 + self.force_thresh_offset)
+        self.ft_thresh[3:] *= (1.0 + self.torque_thresh_offset)
+    
+    
+    def pub_ft_thresh(self):
+        msg = Float64MultiArray()
+        msg.data = self.ft_thresh
+        self.ft_thresh_pub.publish(msg=msg)
         
 
     def load_parameters_from_config(self, args):
