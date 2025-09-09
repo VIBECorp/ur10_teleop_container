@@ -66,6 +66,7 @@ class TargetPose(Node):
         self.target_pose = copy.deepcopy(self.init_pose)
         self.last_success_target_pose = copy.deepcopy(self.init_pose)
         self.delta_target_input = [0.0] * 6
+        self.delta_target_task_input = [0.0] * 6
         self.ik_success = False
         # self.target_pose_msg = self.update_target_pose()
         self.current_pose = None
@@ -84,6 +85,8 @@ class TargetPose(Node):
         self.velocity_controller = self.config['velocity_controller']
         self.planning_group = self.config['planning_group']
         
+        self.joint_manual_control = False
+        
         # Listener
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
@@ -100,6 +103,8 @@ class TargetPose(Node):
         self.create_subscription(Float64MultiArray, 'touch_commands', self.touch_commands_callback, 10)
         self.create_subscription(Float64MultiArray, 'ft_thresh', self.update_ft_thresh, 10)
         self.create_subscription(Float64MultiArray, f'/{self.velocity_controller}/commands', self.vel_msg_callback, 10)
+        self.create_subscription(Float64MultiArray, 'delta_target_task_input', self.delta_target_task_input_callback, 10)
+        self.create_subscription(Float64MultiArray, 'delta_target_joint_input', self.delta_target_joint_input_callback, 10)
         
         # Services & Clients
         self.create_service(Trigger, 'reset_target_pose', self.reset_target_pose)
@@ -110,6 +115,13 @@ class TargetPose(Node):
         
         self.create_subscription(Bool, "/shutdown", self.shutdown_callback, 10)
         
+    def delta_target_task_input_callback(self, msg):
+        self.delta_target_task_input = msg.data.tolist()
+
+
+    def delta_target_joint_input_callback(self, msg):
+        self.joint_manual_control = True
+        
     def shutdown_callback(self, msg):
         if msg.data:
             rclpy.shutdown()
@@ -117,6 +129,16 @@ class TargetPose(Node):
         
     def vel_msg_callback(self, msg):
         self.vel_msg = list(msg.data)
+        
+        if self.joint_manual_control:
+            if np.sum(np.abs(np.array(self.vel_msg))) > 0:
+                self.set_target_as_current(self.current_pose)
+                self.target_pose_pub.publish(self.current_pose)
+            else:
+                self.joint_manual_control = False
+                
+                
+        
         
     def update_ft_thresh(self, msg):
         data = np.array(msg.data)
@@ -282,7 +304,8 @@ class TargetPose(Node):
         # if not self.ik_success:
         #     self.target_pose = copy.deepcopy(self.last_success_target_pose)         
         for i in range(6):
-            self.target_pose[i] += self.delta_target_input[i]
+            self.target_pose[i] += self.delta_target_input[i] + self.delta_target_task_input[i]
+        self.delta_target_task_input = [0.0] * 6
 
     def convert_to_pose_msg(self, target_pose):
         # Quaternion 변환

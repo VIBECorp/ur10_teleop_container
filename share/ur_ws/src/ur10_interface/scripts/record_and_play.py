@@ -76,12 +76,18 @@ class RecordAndPlay(Node):
         temp2 = temp[:]  # 깊은 복사 (Shallow Copy)
 
         # 인덱스 변경
-        temp2[0] = temp[5]
-        temp2[1] = temp[0]
-        temp2[2] = temp[1]
-        temp2[3] = temp[2]
-        temp2[4] = temp[3]
-        temp2[5] = temp[4]
+        # temp2[0] = temp[5]
+        # temp2[1] = temp[0]
+        # temp2[2] = temp[1]
+        # temp2[3] = temp[2]
+        # temp2[4] = temp[3]
+        # temp2[5] = temp[4]
+        temp2[0] = temp[2]
+        temp2[1] = temp[1]
+        temp2[2] = temp[0]
+        temp2[3] = temp[3]
+        temp2[4] = temp[4]
+        temp2[5] = temp[5]
         self.current_joint_states = temp2
         
         if self.start_continuous_recording:

@@ -146,8 +146,8 @@ def generate_launch_description():
         declare_arguments(),
         SetParameter(name='use_sim_time', value=use_sim_time), # set "use_sim_time" to true for all instances in the launch file
         #move_group_launch,
-        aft_can_node,
-        aft_filtered_node,
+        #aft_can_node,
+        #aft_filtered_node,
         ee_pose_node,
         input_node,
         mode_manager_node,
@@ -156,7 +156,7 @@ def generate_launch_description():
         task2joint_node,
         teleop_controller_node,
         visualize_target_pose_node,
-        grav_comp_node,
-        touch_comm_node,
+        #grav_comp_node,
+        #touch_comm_node,
         record_node,
     ])

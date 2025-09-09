@@ -124,12 +124,18 @@ private:
 
     std::vector<double> convert_joint_order(std::vector<double> joint_values){
         std::vector<double> converted_joint_values;
-        converted_joint_values.push_back(joint_values[5]);
-        converted_joint_values.push_back(joint_values[0]);
-        converted_joint_values.push_back(joint_values[1]);
+        // converted_joint_values.push_back(joint_values[5]);
+        // converted_joint_values.push_back(joint_values[0]);
+        // converted_joint_values.push_back(joint_values[1]);
+        // converted_joint_values.push_back(joint_values[2]);
+        // converted_joint_values.push_back(joint_values[3]);
+        // converted_joint_values.push_back(joint_values[4]);
         converted_joint_values.push_back(joint_values[2]);
+        converted_joint_values.push_back(joint_values[1]);
+        converted_joint_values.push_back(joint_values[0]);
         converted_joint_values.push_back(joint_values[3]);
         converted_joint_values.push_back(joint_values[4]);
+        converted_joint_values.push_back(joint_values[5]);
         return converted_joint_values;
     }
 

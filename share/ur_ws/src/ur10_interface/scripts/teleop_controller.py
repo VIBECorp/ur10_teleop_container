@@ -4,6 +4,7 @@ import argparse
 import yaml
 import os
 import numpy as np
+import time
 
 from utils import get_package_dir, get_file_dir
 
@@ -16,7 +17,9 @@ AI = 4
 MOVEIT = 5
 IDLE = 6
 GCOMP = 7
-DIRECT = 8
+DIRECT_TRANS = 8
+DIRECT_ROT = 9
+REPLAY = 10
 
 mode_dict = {
     0: "INIT",
@@ -27,7 +30,10 @@ mode_dict = {
     5: "MOVEIT",
     6: "IDLE",
     7: "GCOMP",
-    8: "DIRECT",
+    8: "DIRECT_TRANS",
+    9: "DIRECT_ROT",
+    10: "REPLAY",
+    -1: "READY",
 }
 
 ## standard library
@@ -64,7 +70,11 @@ class TeleopController(Node):
         self.target_joints = np.zeros(6)
         self.current_joints = np.zeros(6)
         self.pre_joint_errors = np.zeros(6)
-        self.joint_vel_msg = Float64MultiArray()  
+        self.joint_vel_msg = Float64MultiArray()
+        
+        self.joint_manual_control = False
+        self.manual_reset_int = 1.0
+        self.last_time_manual_input = time.time()
 
         # Subscriber 설정
         self.target_joint_sub = self.create_subscription(
@@ -80,6 +90,7 @@ class TeleopController(Node):
             10)
         
         self.create_subscription(Int32, 'mode', self.mode_callback, 10)
+        self.create_subscription(Float64MultiArray, 'delta_target_joint_input', self.delta_target_joint_input_callback, 10)
 
         # Publisher 설정
         self.vel_pub = self.create_publisher(Float64MultiArray, f'/{self.velocity_controller}/commands', 10)
@@ -88,6 +99,21 @@ class TeleopController(Node):
         self.timer = self.create_timer(1.0 / 250.0, self.control_loop)  # 250Hz 실행
         
         self.create_subscription(Bool, "/shutdown", self.shutdown_callback, 10)
+        
+    
+    def delta_target_joint_input_callback(self, msg):
+        self.joint_manual_control = True
+        delta = np.array(msg.data.tolist())
+        target_joint_position = self.current_joints.copy()
+        
+        if (len(delta) == len(self.current_joints)):
+            target_joint_position += delta
+        
+        if self.mode in [TELEOP, TASK_CONTROL, JOINT_CONTROL, IDLE, AI, DIRECT_TRANS, DIRECT_ROT]:
+            self.target_joints = target_joint_position  
+            self.last_time_manual_input = time.time()
+        
+    
         
     def shutdown_callback(self, msg):
         if msg.data:
@@ -121,6 +147,8 @@ class TeleopController(Node):
             # vel_command[idx] = 0.0
             # self.joint_vel_msg.data = vel_command
             self.pre_joint_errors = joint_errors
+            if time.time() - self.last_time_manual_input > self.manual_reset_int:
+                self.joint_manual_control = False
         except Exception as e:
             self.joint_vel_msg.data = np.zeros(6)
                 
@@ -132,13 +160,29 @@ class TeleopController(Node):
         self.vel_pub.publish(self.joint_vel_msg)
 
     def target_joint_callback(self, msg):
-        self.target_joints = msg.data
+        if not self.joint_manual_control:
+            self.target_joints = msg.data
 
     def current_joint_callback(self, msg):  
         current_joints = list(msg.position)
         if self.env == 'real':
             # real hardware에서 나온 joint states 순서 변경
-            converted_joints = [current_joints[5], current_joints[0], current_joints[1], current_joints[2], current_joints[3], current_joints[4]]
+            # converted_joints = [
+            #     current_joints[5], 
+            #     current_joints[0], 
+            #     current_joints[1], 
+            #     current_joints[2], 
+            #     current_joints[3], 
+            #     current_joints[4]
+            #     ]
+            converted_joints = [
+                current_joints[2], 
+                current_joints[1], 
+                current_joints[0], 
+                current_joints[3], 
+                current_joints[4], 
+                current_joints[5]
+                ]
             current_joints = converted_joints
         self.current_joints = current_joints
         

@@ -269,7 +269,11 @@ class ModeManager(Node):
         # Record and Play
         self.trajectory_filename = os.path.join(self.config['trajectory_saving_path'], self.config['trajectory_saving_name'])
         if os.path.exists(self.trajectory_filename):
-            self.recorded_trajectory = RecordedTrajectory(self.trajectory_filename)
+            try:
+                self.recorded_trajectory = RecordedTrajectory(self.trajectory_filename)
+            except:
+                self.recorded_trajectory = None
+            
         else:
             self.recorded_trajectory = None
         self.play_saved = False
@@ -288,11 +292,11 @@ class ModeManager(Node):
         # publisher & subscriber
         self.mode_pub = self.create_publisher(Int32, 'mode', 10)
         self.create_subscription(Int32, 'mode_from_touch', self.mode_from_touch_callback, 10)
-        self.joystick_command_sub = self.create_subscription(Float64MultiArray, 'joystick_command', self.joystick_command_callback, 10)
-        self.keyboard_command_sub = self.create_subscription(Float64MultiArray, 'keyboard_command', self.keyboard_command_callback, 10)
-        self.joint_state_sub = self.create_subscription(JointState, 'joint_states', self.joint_state_callback, 10)
-        self.target_joint_pos_sub = self.create_subscription(Float64MultiArray, 'target_joint_position', self.target_joint_pos_callback, 10)
-        self.ft_wrench_sub = self.create_subscription(Wrench, self.config['ft_sensor_node'], self.ft_data_callback, 10)
+        self.create_subscription(Float64MultiArray, 'joystick_command', self.joystick_command_callback, 10)
+        self.create_subscription(Float64MultiArray, 'keyboard_command', self.keyboard_command_callback, 10)
+        self.create_subscription(JointState, 'joint_states', self.joint_state_callback, 10)
+        self.create_subscription(Float64MultiArray, 'target_joint_position', self.target_joint_pos_callback, 10)
+        self.create_subscription(Wrench, self.config['ft_sensor_node'], self.ft_data_callback, 10)
         # self.tf_ft_sub = self.create_subscription(Wrench, self.config['tf_ft_node'], self.tf_ft_data_callback, 10)
         self.create_subscription(PoseStamped, 'current_ee_pose', self.current_pose_callback, 10)
         self.target_pose_pub = self.create_publisher(PoseStamped, "target_pose", 10)
@@ -300,6 +304,7 @@ class ModeManager(Node):
         self.create_subscription(String, 'trajectory_filename', self.trj_file_name_callback, 10)
         
         self.update_ft_thresh_pub = self.create_publisher(Bool, 'update_ft_thresh', 10)
+        
         
         # service
         self.switch_controller_client = self.create_client(SwitchController, '/controller_manager/switch_controller')
@@ -321,6 +326,7 @@ class ModeManager(Node):
         self.timer = self.create_timer(0.001, self.loop)
         
         self.create_subscription(Bool, "/shutdown", self.shutdown_callback, 10)
+            
         
     def shutdown_callback(self, msg):
         if msg.data:
@@ -467,24 +473,36 @@ class ModeManager(Node):
         temp2 = temp[:]  # 깊은 복사 (Shallow Copy)
 
         # 인덱스 변경
-        temp2[0] = temp[5]
-        temp2[1] = temp[0]
-        temp2[2] = temp[1]
-        temp2[3] = temp[2]
-        temp2[4] = temp[3]
-        temp2[5] = temp[4]
+        # temp2[0] = temp[5]
+        # temp2[1] = temp[0]
+        # temp2[2] = temp[1]
+        # temp2[3] = temp[2]
+        # temp2[4] = temp[3]
+        # temp2[5] = temp[4]
+        temp2[0] = temp[2]
+        temp2[1] = temp[1]
+        temp2[2] = temp[0]
+        temp2[3] = temp[3]
+        temp2[4] = temp[4]
+        temp2[5] = temp[5]
         self.current_joint_states = temp2
         
         temp = list(msg.velocity)
         temp2 = temp[:]  # 깊은 복사 (Shallow Copy)
 
         # 인덱스 변경
-        temp2[0] = temp[5]
-        temp2[1] = temp[0]
-        temp2[2] = temp[1]
-        temp2[3] = temp[2]
-        temp2[4] = temp[3]
-        temp2[5] = temp[4]
+        # temp2[0] = temp[5]
+        # temp2[1] = temp[0]
+        # temp2[2] = temp[1]
+        # temp2[3] = temp[2]
+        # temp2[4] = temp[3]
+        # temp2[5] = temp[4]
+        temp2[0] = temp[2]
+        temp2[1] = temp[1]
+        temp2[2] = temp[0]
+        temp2[3] = temp[3]
+        temp2[4] = temp[4]
+        temp2[5] = temp[5]
         self.current_joint_velocity = temp2
     
         
